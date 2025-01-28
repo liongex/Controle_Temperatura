@@ -1,17 +1,41 @@
 #include <stdio.h>
+#include <stdlib.h>
+
+
+//bibliotecas da conexão sem fio
+#include "wifi.h"
+#include "MQTT_lib.h"
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "freertos/queue.h"
 
 #include "driver/gpio.h"
 #include "driver/i2c.h"  //BIBLIOTECA DO I2C
 #include "esp_log.h"
+#include "esp_wifi.h"
 #include "driver/ledc.h"
 #include "freertos/semphr.h"
+#include "esp_err.h"
+#include "nvs_flash.h"
+#include <esp_system.h>
 
 #include <dht.h> // BIBLIOTECA DO SENSOR
 #include "i2c-lcd1602.h" // BIBLIOTECA DO DISPLAY
 
+#include <string.h> //Requires by memset
+
+
+#include "spi_flash_mmap.h"
+#include <esp_http_server.h>
+#include <math.h>
+#include "esp_event.h"
+#include "freertos/event_groups.h"
+#include "esp_netif.h"
+#include <lwip/sockets.h>
+#include <lwip/sys.h>
+#include <lwip/api.h>
+#include <lwip/netdb.h>
 
 
 #define I2C_MASTER_SCL_IO 22 //GPIO DO SCL
@@ -37,6 +61,50 @@ void pwm(); // PROTÓTIO DA FUNÇÃO DE INICIALIZAÇÃO DO PWM
 void vTemperatura(void *pvParameter); //TAREFA PARA LER TEMPERATURA E HUMIDADE
 void vDisplay(void *pvParameter); //TAREFA PARA ESCREVER NO DISPLAY
 void vSetPWM(void *pvParameter); //TAREFA PARA AJUSTAR PWM
+void vMQTT(void *pvParameter); //TAREFA PARA ESCREVER NO BROKER MQTT
+void vHTTP(void *pvParameter); //TAREFA PARA ESCREVER NO SITE
+
+
+char html_page[] = "<!DOCTYPE HTML><html>\n"
+                   "<head>\n"
+                   "  <title>ELE0629 - AR CONDICIONADO</title>\n"
+                   "  <meta http-equiv=\"refresh\" content=\"10\">\n"
+                   "  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n"
+                   "  <link rel=\"stylesheet\" href=\"https://use.fontawesome.com/releases/v5.7.2/css/all.css\" integrity=\"sha384-fnmOCqbTlWIlj8LyTjo7mOUStjsKC4pOpQbqyi7RrhN7udi9RwhKkMHpvLbHG9Sr\" crossorigin=\"anonymous\">\n"
+                   "  <link rel=\"icon\" href=\"data:,\">\n"
+                   "  <style>\n"
+                   "    html {font-family: Arial; display: inline-block; text-align: center;}\n"
+                   "    p {  font-size: 1.2rem;}\n"
+                   "    body {  margin: 0;}\n"
+                   "    .topnav { overflow: hidden; background-color: #241d4b; color: white; font-size: 1.7rem; }\n"
+                   "    .content { padding: 20px; }\n"
+                   "    .card { background-color: white; box-shadow: 2px 2px 12px 1px rgba(140,140,140,.5); }\n"
+                   "    .cards { max-width: 700px; margin: 0 auto; display: grid; grid-gap: 2rem; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); }\n"
+                   "    .reading { font-size: 2.0rem; }\n"
+                   "    .card.temperature { color: #0e7c7b; }\n"
+                   "    .card.humidity { color: #17bebb; }\n"
+                   "    .card.conforto { color:rgb(0, 80, 78);}\n"
+                   "  </style>\n"
+                   "</head>\n"
+                   "<body>\n"
+                   "  <div class=\"topnav\">\n"
+                   "    <h3>ELE0629 - AR CONDICIONADO</h3>\n"
+                   "  </div>\n"
+                   "  <div class=\"content\">\n"
+                   "    <div class=\"cards\">\n"
+                   "      <div class=\"card temperature\">\n"
+                   "        <h4><i class=\"fas fa-thermometer-half\"></i> TEMPERATURA</h4><p><span class=\"reading\">%.2f&deg;C</span></p>\n"
+                   "      </div>\n"
+                   "      <div class=\"card humidity\">\n"
+                   "        <h4><i class=\"fas fa-tint\"></i> UMIDADE</h4><p><span class=\"reading\">%.2f</span> &percnt;</span></p>\n"
+                   "      </div>\n"
+                   "      <div class=\"card conforto\">\n"
+                   "        <h4><i class=\"fas fa-bed\"></i> CONFORTO</h4><p><span class=\"reading\">%s</p>\n"
+                   "      </div>\n"
+                   "    </div>\n"
+                   "  </div>\n"
+                   "</body>\n"
+                   "</html>";
 
 float umidade;
 float temperatura;
@@ -44,17 +112,24 @@ float temperatura;
 static const char *TASK_TEMP = "TEMPERATURA";
 static const char *TASK_DISPLAY = "DISPLAY";
 static const char *TASK_PWM = "PWM";
+static const char *TASK_MQTT = "MQTT";
+static const char *TASK_HTTP = "HTTP";
 
 void app_main(void) {
+
+    nvs_flash_init();
+    wifi_init_sta();
 
     xTempMutex = xSemaphoreCreateMutex();
     xSemaphoreDisplay = xSemaphoreCreateBinary();
     xSemaphorePWM = xSemaphoreCreateBinary();
   
   // Criação das tarefas
-    xTaskCreate(vTemperatura, "vTemperatura", 2048, NULL, 1, NULL);
-    xTaskCreate(vDisplay, "vDisplay", 2048, NULL, 3, NULL);
-    xTaskCreate(vSetPWM, "vSetPWM", 2048, NULL, 5, NULL);
+    xTaskCreatePinnedToCore(vTemperatura, "vTemperatura", 2048, NULL, 1, NULL, 0);
+    xTaskCreatePinnedToCore(vDisplay, "vDisplay", 2048, NULL, 3, NULL, 0);
+    xTaskCreatePinnedToCore(vSetPWM, "vSetPWM", 2048, NULL, 5, NULL, 0);
+    xTaskCreatePinnedToCore(vMQTT, "vMQTT", 4096, NULL, 1, NULL, 1);
+    xTaskCreatePinnedToCore(vHTTP, "vHTTP", 4096, NULL, 3, NULL, 1);
     
 }
 
@@ -217,3 +292,94 @@ void pwm(){
     ESP_ERROR_CHECK(ledc_channel_config(&channel_config));
 
 };
+
+void vMQTT(void *pvParameter){
+
+    mqtt_start();
+  while(true){
+    if(xSemaphoreTake(xTempMutex, portMAX_DELAY) == pdTRUE){
+      char msg1[50];
+      char msg2[50];
+      char *msg3;
+
+      snprintf(msg1, sizeof(msg1), "Temp: %.2f °C", temperatura);
+      mqtt_publish("ELE0629/Temperatura", msg1, 0, 0);
+      ESP_LOGI(TASK_MQTT, "PUBLICACAO TEMPERATURA EXECUTADA."); 
+
+      snprintf(msg2, sizeof(msg2), "Umid: %.2f%%", umidade);
+      mqtt_publish("ELE0629/Umidade", msg2, 0, 0);
+      ESP_LOGI(TASK_MQTT, "PUBLICACAO UMIDADE EXECUTADA.");
+
+      msg3 = determinarConfortoTermico();
+      mqtt_publish("ELE0629/Conforto", msg3, 0, 0);
+      ESP_LOGI(TASK_MQTT, "PUBLICACAO CONFORTO EXECUTADA.");
+      
+      xSemaphoreGive(xTempMutex);
+      }else{
+        ESP_LOGE(TASK_MQTT, "PUBLICACAO NAO EXECUTADA.");
+      }
+      vTaskDelay(pdMS_TO_TICKS(2000)); 
+    }
+}; 
+
+esp_err_t send_web_page(httpd_req_t *req)
+{
+    int response;
+    char *msg;
+    msg = determinarConfortoTermico();
+    
+    char response_data[sizeof(html_page) + 50];
+    memset(response_data, 0, sizeof(response_data));
+    sprintf(response_data, html_page, temperatura, umidade, msg);
+    response = httpd_resp_send(req, response_data, HTTPD_RESP_USE_STRLEN);
+   
+    xSemaphoreGive(xTempMutex); 
+    return response;
+}
+
+esp_err_t get_req_handler(httpd_req_t *req)
+{
+    if (xSemaphoreTake(xTempMutex, portMAX_DELAY)) { 
+            return send_web_page(req);
+        }else{
+                return 0;
+            }
+    
+}
+
+httpd_uri_t uri_get = {
+    .uri = "/",
+    .method = HTTP_GET,
+    .handler = get_req_handler,
+    .user_ctx = NULL};
+
+httpd_handle_t setup_server(void)
+{
+    httpd_config_t config = HTTPD_DEFAULT_CONFIG();
+    httpd_handle_t server = NULL;
+
+    if (httpd_start(&server, &config) == ESP_OK)
+    {
+        httpd_register_uri_handler(server, &uri_get);
+    }
+
+    return server;
+}
+
+void vHTTP(void *pvParameter) { 
+    
+
+   if (wifi_conect_status() == 1)
+    {
+        setup_server();
+        ESP_LOGI(TASK_HTTP, "Web Server is up and running\n");
+    }
+     else
+     {
+        ESP_LOGI(TASK_HTTP, "Failed to connected with Wi-Fi, check your network Credentials\n");
+     }
+
+    while (1) { 
+        vTaskDelay(pdMS_TO_TICKS(1000)); 
+    } 
+}
