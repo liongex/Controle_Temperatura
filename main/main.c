@@ -315,6 +315,7 @@ void vMQTT(void *pvParameter){
     }
 }; 
 
+//CÓDIGOS RESPONSÁVEIS PELA CONEXÃO HTTP
 esp_err_t send_web_page(httpd_req_t *req)
 {
     int response;
