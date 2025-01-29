@@ -1,43 +1,31 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-
-//bibliotecas da conexão sem fio
-#include "wifi.h"
-#include "MQTT_lib.h"
-
+//BIBLIOTECAS DO FREERTOS
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
-#include "freertos/queue.h"
-
-#include "driver/gpio.h"
-#include "driver/i2c.h"  //BIBLIOTECA DO I2C
-#include "esp_log.h"
-#include "esp_wifi.h"
-#include "driver/ledc.h"
 #include "freertos/semphr.h"
-#include "esp_err.h"
+
+#include "driver/gpio.h" //BIBLIOTECA DO MÓDULO GPIO
+#include "driver/i2c.h"  //BIBLIOTECA DO I2C
+#include "esp_log.h" //BIBLIOTECA DE LOGS DE DEBUGGER
+#include "driver/ledc.h"  //BIBLIOTECA DO M´DULO PWM
 #include "nvs_flash.h"
-#include <esp_system.h>
 
 #include <dht.h> // BIBLIOTECA DO SENSOR
 #include "i2c-lcd1602.h" // BIBLIOTECA DO DISPLAY
 
-#include <string.h> //Requires by memset
-
-
-#include "spi_flash_mmap.h"
+//BIBLIOTECAS DA COMUNICAÇÃO SEM FIO
+#include "wifi.h"
+#include "MQTT_lib.h"
 #include <esp_http_server.h>
-#include <math.h>
-#include "esp_event.h"
-#include "freertos/event_groups.h"
 #include "esp_netif.h"
 #include <lwip/sockets.h>
 #include <lwip/sys.h>
 #include <lwip/api.h>
 #include <lwip/netdb.h>
 
-
+//DEFINIÇÃO DE PARÂMETROS PARA O DISPLAY LCD COM I2C
 #define I2C_MASTER_SCL_IO 22 //GPIO DO SCL
 #define I2C_MASTER_SDA_IO 21 //GPIO DO SDA
 #define I2C_MASTER_NUM I2C_NUM_0 //DIVER I2C UTILIZADO
@@ -46,8 +34,10 @@
 #define LCD_COLS 16 // Número de colunas do display LCD 
 #define LCD_ROWS 2 // Número de linhas do display LCD
 
+//DEFINIÇÃO DE PINO PARA O SENSOR DE TEMPERATURA
 #define DHT_PIN GPIO_NUM_18 //GPIO DO SENSOR
 
+//CRIAÇÃO DE MUTEX E SEMÁFORO PARA CONTROLE DE EXECUÇÃO ENTRE AS TAREFAS
 SemaphoreHandle_t xTempMutex, xSemaphoreDisplay, xSemaphorePWM;
 
 void i2c_master_init(); // PROTÓTIPO DA FUNÇÃO PARA INICIALIZAR O DRIVE I2C
@@ -64,7 +54,7 @@ void vSetPWM(void *pvParameter); //TAREFA PARA AJUSTAR PWM
 void vMQTT(void *pvParameter); //TAREFA PARA ESCREVER NO BROKER MQTT
 void vHTTP(void *pvParameter); //TAREFA PARA ESCREVER NO SITE
 
-
+//DECLARAÇÃO DAS CONFIGURAÇÕES DA WEBPAGE
 char html_page[] = "<!DOCTYPE HTML><html>\n"
                    "<head>\n"
                    "  <title>ELE0629 - AR CONDICIONADO</title>\n"
@@ -293,6 +283,7 @@ void pwm(){
 
 };
 
+//TAREFA PARA ENVIO DOS DADOS VIA MQTT
 void vMQTT(void *pvParameter){
 
     mqtt_start();
