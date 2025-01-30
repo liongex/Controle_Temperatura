@@ -264,7 +264,7 @@ void pwm(){
     ledc_timer_config_t timer_conf ={
         .speed_mode = LEDC_HIGH_SPEED_MODE,
         .timer_num = LEDC_TIMER_0,
-        .freq_hz = 1,
+        .freq_hz = 200,
         .duty_resolution = LEDC_TIMER_10_BIT,
         .clk_cfg = LEDC_AUTO_CLK
     };
